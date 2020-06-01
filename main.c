@@ -6,10 +6,10 @@
 #include <stdint.h>
 #include <string.h>
 #include <pthread.h>
+#include <unistd.h>
 
 #define CLOCK_TYPE CLOCK_MONOTONIC
 #define CACHE_LINE_SIZE 64u
-#define NUM_THREADS 1
 
 
 bool shouldLog(struct timespec* deadline) {
@@ -24,13 +24,32 @@ bool shouldLog(struct timespec* deadline) {
     return currentTime.tv_nsec >= deadline->tv_nsec;
 }
 
-bool shouldSplit(int argc, char *argv[]) {
-    if (argc != 2) {
-        printf("Missing Mode. Either 'aligned' or 'split' as a parameter!\n");
+int threadCount(int argc, char *argv[]) {
+    if (argc < 3) {
+        printf("Defaulting to a single thread mode. \n"
+               "Pass integer as a second parameter to configure thread count \n");
+        return 1;
+    }
+    char *arg = argv[2];
+    char *endPtr;
+    int threads = (int)strtol(arg, &endPtr, 10);
+    if (*endPtr) {
+        printf("Invalid thread count! Pass thread an integer as a 2nd parameter\n");
         exit(-1);
     }
+    printf("Using %i threads \n", threads);
+    return threads;
+}
+
+bool shouldSplit(int argc, char *argv[]) {
+    if (argc < 2) {
+        printf("Defaulting to cache-aligned mode. "
+               "Pass 'split' as a first parameter to enable the lock-splitting mode. "
+               "Pass 'align' to explicitly configure the cache-aligned mode !\n");
+        return false;
+    }
     char *arg = argv[1];
-    if (strncmp(arg, "aligned", strlen("aligned")) == 0) {
+    if (strncmp(arg, "align", strlen("align")) == 0) {
         return false;
     } else if (strncmp(arg, "split", strlen("split")) == 0) {
         return true;
@@ -49,7 +68,7 @@ void *loop(void *arg) {
     for (;;) {
         atomic_fetch_add(ptr, 1);
         if (shouldLog(&next)) {
-            printf("Iteration per second: %u\n", counter);
+            printf("Per-thread iteration per second: %u\n", counter);
             next.tv_sec += 1;
             counter = 0;
         }
@@ -69,10 +88,14 @@ int main(int argc, char *argv[]) {
         printf("Not lock splitting, relying on a compiler to have the address aligned within a single cache line\n");
     }
 
-    pthread_t threads[NUM_THREADS];
+    int threadsCount = threadCount(argc, argv);
+    pthread_t *threads = malloc(threadsCount * sizeof(threadsCount));
     int i;
-    for (i = 0; i < NUM_THREADS; ++i)
+    for (i = 0; i < threadsCount; ++i)
         pthread_create(&threads[i], NULL, loop, ptr);
-    for (i = 0; i < NUM_THREADS; ++i)
-        pthread_join(threads[i], NULL);
+    for (;;) {
+        sleep(1);
+        printf("Global iteration count: %u\n", *ptr);
+        *ptr = 0;
+    }
 }
