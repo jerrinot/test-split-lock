@@ -5,9 +5,12 @@
 #include <stdbool.h>
 #include <stdint.h>
 #include <string.h>
+#include <pthread.h>
 
 #define CLOCK_TYPE CLOCK_MONOTONIC
 #define CACHE_LINE_SIZE 64u
+#define NUM_THREADS 1
+
 
 bool shouldLog(struct timespec* deadline) {
     struct timespec currentTime;
@@ -37,6 +40,23 @@ bool shouldSplit(int argc, char *argv[]) {
     }
 }
 
+void *loop(void *arg) {
+    int *ptr = arg;
+    struct timespec next;
+    clock_gettime(CLOCK_TYPE, &next);
+    next.tv_sec += 1;
+    uint counter = 0;
+    for (;;) {
+        atomic_fetch_add(ptr, 1);
+        if (shouldLog(&next)) {
+            printf("Iteration per second: %u\n", counter);
+            next.tv_sec += 1;
+            counter = 0;
+        }
+        counter++;
+    }
+}
+
 int main(int argc, char *argv[]) {
     int *ptr = malloc(2 * CACHE_LINE_SIZE);
     printf("Address from malloc: %p\n", ptr);
@@ -49,18 +69,10 @@ int main(int argc, char *argv[]) {
         printf("Not lock splitting, relying on a compiler to have the address aligned within a single cache line\n");
     }
 
-    struct timespec next;
-    clock_gettime(CLOCK_TYPE, &next);
-    next.tv_sec += 1;
-
-    uint counter = 0;
-    for (;;) {
-        atomic_fetch_add(ptr, 1);
-        if (shouldLog(&next)) {
-            printf("Iteration per second: %u\n", counter);
-            next.tv_sec += 1;
-            counter = 0;
-        }
-        counter++;
-    }
+    pthread_t threads[NUM_THREADS];
+    int i;
+    for (i = 0; i < NUM_THREADS; ++i)
+        pthread_create(&threads[i], NULL, loop, ptr);
+    for (i = 0; i < NUM_THREADS; ++i)
+        pthread_join(threads[i], NULL);
 }
